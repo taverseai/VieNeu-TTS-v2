@@ -141,7 +141,7 @@ class VieNeuV3TurboForTTS(PreTrainedModel):
         self.text_embeddings = nn.Embedding(config.text_vocab_size, config.hidden_size)
         self.audio_embeddings = nn.ModuleList([nn.Embedding(config.audio_vocab_size, config.hidden_size) for _ in range(config.n_vq)])
         from transformers import Qwen3Config, Qwen3Model
-        qwen_cfg = Qwen3Config(vocab_size=config.text_vocab_size, hidden_size=config.hidden_size, num_hidden_layers=config.num_hidden_layers, num_attention_heads=config.num_attention_heads, num_key_value_heads=config.num_key_value_heads, head_dim=config.head_dim, intermediate_size=config.intermediate_size, max_position_embeddings=config.max_position_embeddings, rope_parameters={'rope_type': 'default', 'rope_theta': config.rope_theta}, rms_norm_eps=config.rms_norm_eps, attention_dropout=config.attention_dropout, tie_word_embeddings=False)
+        qwen_cfg = Qwen3Config(vocab_size=config.text_vocab_size, hidden_size=config.hidden_size, num_hidden_layers=config.num_hidden_layers, num_attention_heads=config.num_attention_heads, num_key_value_heads=config.num_key_value_heads, head_dim=config.head_dim, intermediate_size=config.intermediate_size, max_position_embeddings=config.max_position_embeddings, rope_theta=config.rope_theta, rope_parameters={'rope_type': 'default', 'rope_theta': config.rope_theta}, rms_norm_eps=config.rms_norm_eps, attention_dropout=config.attention_dropout, tie_word_embeddings=False)
         self.semantic_backbone = Qwen3Model(qwen_cfg)
         self.semantic_backbone.embed_tokens = self.text_embeddings
         self.acoustic_decoder = AcousticDecoder(config)

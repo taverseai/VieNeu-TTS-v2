@@ -10,6 +10,14 @@ Toàn bộ quy trình dựa trên chính SDK `vieneu`: dữ liệu được chu�
 >
 > Muốn nhiều giọng? Train mỗi giọng một LoRA riêng — đơn giản và ổn định hơn nhồi nhiều giọng vào một adapter.
 
+## Chạy trên Google Colab hoặc Kaggle
+
+Dùng notebook [VieNeu_TTS_Finetune_Colab_Kaggle.ipynb](VieNeu_TTS_Finetune_Colab_Kaggle.ipynb). Tải file rồi mở bằng **Upload notebook** trên Colab hoặc **Import notebook** trên Kaggle, bật GPU và chạy các ô theo thứ tự. Trên Kaggle cần bật Internet và thêm dataset vào Input.
+
+Notebook có hướng dẫn nén `metadata.csv` + `raw_audio/` thành ZIP từ Windows, upload trực tiếp hoặc đọc từ Drive/Kaggle, cài môi trường, chuẩn bị parquet, train LoRA, chọn checkpoint để merge, đóng gói giọng, nghe thử và tải kết quả. Trên Kaggle, notebook tự tìm dataset theo cấu trúc trong Input, không cần nhập đường dẫn; đường dẫn cũ không tồn tại sẽ được bỏ qua để tìm lại. Nếu có nhiều dataset phù hợp, chọn bằng số thứ tự `DATASET_CHOICE`. Cấu hình mặc định dành cho dataset một giọng khoảng 329 clip; tự chọn BF16 khi GPU hỗ trợ, dùng FP32 khi không hỗ trợ.
+
+Để giữ kết quả trên Colab, bật `SAVE_TO_DRIVE=True` trong notebook. Trên Kaggle, lưu notebook kèm outputs hoặc tải ZIP từ `/kaggle/working/vieneu_exports`. Script hiện chưa hỗ trợ resume optimizer; checkpoint đã lưu có thể dùng để merge model.
+
 ## ⚙️ Cài đặt
 
 ```bash
@@ -91,6 +99,50 @@ tts.save(audio, "out.wav")
 ```
 
 Lưu ý: model merge được dạy cho **một giọng**; muốn nó clone giọng khác thì dùng model gốc. (`make_voice.py --with-ref-codes` chỉ dành cho đóng gói giọng cho model gốc.)
+
+## 5. Dùng model fine-tune trong VieNeu-TTS web
+
+Giải nén file `*_merged.zip` vào thư mục giọng, ví dụ `finetune/voices/dat_phi_01/`. Thư mục kết quả phải có `merged/update/model.safetensors` và `merged/voices_v3_turbo.json`.
+
+Khai báo model trong `backbone_configs` của `config.yaml` (tên lựa chọn nên chứa `v3-Turbo` để giao diện bật các chức năng v3):
+
+```yaml
+"VieNeu-TTS-v3-Turbo — Đạt Phi 01 (GPU)":
+  mode: v3turbo
+  repo: finetune/voices/dat_phi_01/merged
+  local: true
+  backend: pytorch
+  requires_cuda: true
+  model_subfolder: update
+  supports_streaming: false
+  description: "Giọng đã fine-tune, dùng GPU NVIDIA/CUDA."
+```
+
+Đường dẫn local được tính từ thư mục chứa `config.yaml`. Cấu hình Đạt Phi 01 đã được thêm sẵn trong repo này.
+
+Nếu chưa có môi trường GPU, cài bằng `uv sync --extra cuda`. Khởi động hoặc khởi động lại web bằng:
+
+```bash
+uv run --extra cuda vieneu-web
+```
+
+Mở `http://127.0.0.1:7860`, chọn **VieNeu-TTS-v3-Turbo — Đạt Phi 01 (GPU)** trong danh sách model, chọn Device **Auto** hoặc **CUDA**, rồi bấm tải model. Trong giọng có sẵn, chọn **Đạt Phi**, nhập văn bản và tạo audio. Bản local Đạt Phi đã đổi tên preset từ `Giong cua toi` thành `Đạt Phi` và giữ tên cũ làm alias; model này được chọn sẵn trong giao diện bằng `default: true` ở config. Giọng chỉ xuất hiện sau khi tải model tương ứng. SDK tự đọc embedding từ `voices_v3_turbo.json`, không cần upload audio mẫu. Model này hiện cần GPU NVIDIA; chưa có bản ONNX fine-tune cho CPU. Lần đầu cần Internet để tải codec MOSS nếu chưa có trong cache.
+
+### Windows: lưu cache và file tạm ngay trong repo
+
+Dừng phiên web cũ, sau đó chạy `run_web_local.bat` ở thư mục gốc repo (có thể nhấp đúp). Hoặc chạy PowerShell:
+
+```powershell
+.\run_web_local.bat
+```
+
+Launcher đặt cache Hugging Face/model/codec, cache uv/pip, Python do uv quản lý, cache Torch/CUDA, giọng người dùng và file audio tạm vào `.runtime/` trong repo; môi trường thư viện ở `.venv/`. Biến môi trường được đặt trước cả bước `uv run`, không thay đổi cấu hình toàn hệ thống. Các lần sau dùng launcher này thay cho lệnh `uv run` trực tiếp. Kiểm tra đường dẫn mà không cài thư viện hay khởi động web bằng `run_web_local.bat -Check`.
+
+Cache và giọng đã lưu từ trước ở hồ sơ người dùng ổ C không tự chuyển sang đây; lần đầu dùng cache mới có thể tải lại model/codec và chưa thấy giọng đã lưu bằng tab Voice Cloning. Giọng fine-tune đóng gói trong `merged/` vẫn được nạp bình thường. File do Windows, driver, trình duyệt hoặc Python đã cài sẵn quản lý có thể vẫn nằm ngoài repo; launcher điều hướng các đường dẫn lưu trữ của ứng dụng và thư viện được liệt kê, không di chuyển các thành phần hệ thống.
+
+### Tương thích tokenizer giữa cloud và máy local
+
+Transformers 5 có thể lưu generic fast tokenizer dưới tên `TokenizersBackend`, trong khi Transformers 4 không nhận tên này. Exporter và bước tạo ZIP trong notebook chuẩn hóa tên đó thành `PreTrainedTokenizerFast`, giữ nguyên `tokenizer.json` và token IDs. Bản model Đạt Phi local đã được sửa tương ứng. SDK cũng truyền rõ `rope_theta` cho Qwen3 để giữ đúng cấu hình khi chạy bằng Transformers 4. Sau khi cập nhật code SDK, cần khởi động lại web.
 
 ## Cấu trúc code
 

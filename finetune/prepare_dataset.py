@@ -60,6 +60,18 @@ def phonemize(text: str) -> str:
     return " ".join(phonemize_text_with_emotions(c) for c in chunks).strip()
 
 
+def check_encoder_pad_frames(recs) -> None:
+    """Reject the known encoder artifact, allowing ordinary trailing silence."""
+    from vieneu_utils.core_utils import ENCODER_PAD_CODE
+
+    n_same = sum(row["codes"][-1][0] == ENCODER_PAD_CODE for row in recs)
+    if len(recs) >= 20 and n_same / len(recs) > 0.5:
+        raise SystemExit(f"{n_same}/{len(recs)} rows end with codebook-0 = {ENCODER_PAD_CODE}: "
+                         "the encoder is appending a pad frame (issue #198). Update vieneu "
+                         "and rebuild — training on this teaches the model to say that frame "
+                         "after every sentence.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset-dir", default=str(ROOT / "finetune" / "dataset"))
@@ -109,14 +121,8 @@ def main() -> None:
         raise SystemExit("No usable clips.")
     # Issue #198: a bug in the encoder used to end EVERY row with the same
     # codebook-0 value (455, the pad-frame artifact) and the model learnt to
-    # emit it after each sentence. Clean data never agrees on a last code.
-    from collections import Counter
-    last = Counter(x["codes"][-1][0] for x in recs)
-    code, n_same = last.most_common(1)[0]
-    if len(recs) >= 20 and n_same / len(recs) > 0.5:
-        raise SystemExit(f"{n_same}/{len(recs)} rows end with codebook-0 = {code}: the encoder is appending a "
-                         f"pad frame (issue #198). Update vieneu and rebuild — training on this teaches the "
-                         f"model to say that frame after every sentence.")
+    # emit it after each sentence. Silence (482) can legitimately dominate endings.
+    check_encoder_pad_frames(recs)
     import pyarrow as pa, pyarrow.parquet as pq
     pq.write_table(pa.Table.from_pylist(recs), str(out))
     total = sum(x["duration"] for x in recs)

@@ -3,6 +3,25 @@ text_settings:
   max_total_chars_streaming: 3000
 
 backbone_configs:
+  "VieNeu-TTS-v3-Turbo — Đạt Phi 02 (GPU)":
+    mode: v3turbo
+    repo: finetune/voices/dat_phi_02/merged
+    local: true
+    backend: pytorch
+    requires_cuda: true
+    model_subfolder: update
+    supports_streaming: false
+    description: "Giọng Đạt Phi 02 đã fine-tune bằng LoRA. Dùng GPU NVIDIA/CUDA và giọng dựng sẵn Đạt Phi 02."
+  "VieNeu-TTS-v3-Turbo — Đạt Phi 01 (GPU)":
+    default: true
+    mode: v3turbo
+    repo: finetune/voices/dat_phi_01/merged
+    local: true
+    backend: pytorch
+    requires_cuda: true
+    model_subfolder: update
+    supports_streaming: false
+    description: "Giọng Đạt Phi 01 đã fine-tune bằng LoRA. Dùng GPU NVIDIA/CUDA và giọng dựng sẵn Đạt Phi."
   # v3 Turbo: default for everyone — CPU runs via ONNX, GPU via PyTorch.
   "VieNeu-TTS-v3-Turbo (new release)":
     repo: pnnbao-ump/VieNeu-TTS-v3-Turbo

@@ -12,6 +12,8 @@ wheels/
 .xpu_venv
 outputs/
 .env
+.runtime/
+voices/
 
 # Finetune Data & Checkpoints
 finetune/dataset/

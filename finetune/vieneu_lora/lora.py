@@ -20,6 +20,17 @@ TARGETS = {"backbone": _BACKBONE, "all": f"({_BACKBONE}|{_ACOUSTIC})"}
 _EXTRA_FILE = "extra_trainable.safetensors"
 
 
+def _save_tokenizer_compatible(tokenizer, out_dir: Path) -> None:
+    """Keep generic fast tokenizers loadable by Transformers 4.x and 5.x."""
+    tokenizer.save_pretrained(str(out_dir))
+    path = out_dir / "tokenizer_config.json"
+    if path.is_file():
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if config.get("tokenizer_class") == "TokenizersBackend":
+            config["tokenizer_class"] = "PreTrainedTokenizerFast"
+            path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def attach_lora(model, *, r: int = 16, alpha: int = 32, dropout: float = 0.05,
                 target: str = "backbone", unfreeze: Sequence[str] = ()):
     """Wrap ``model`` in a PEFT model with LoRA layers injected in place.
@@ -65,7 +76,7 @@ def save_adapter(peft_model, out_dir: str | Path, tokenizer=None) -> Path:
         save_file(sd, str(out / _EXTRA_FILE))
         (out / "extra_trainable.json").write_text(json.dumps(extras), encoding="utf-8")
     if tokenizer is not None:
-        tokenizer.save_pretrained(str(out))
+        _save_tokenizer_compatible(tokenizer, out)
     return out
 
 
@@ -114,7 +125,7 @@ def export_merged(model, tokenizer, base_repo: str, out_dir: str | Path, *, subf
     save_file(sd, str(sub / "model.safetensors"), metadata={"format": "pt"})
     model.config.save_pretrained(str(sub))
     if tokenizer is not None:
-        tokenizer.save_pretrained(str(sub))
+        _save_tokenizer_compatible(tokenizer, sub)
     # Root files the SDK reads next to the weights (voice cloning + download counter).
     base = Path(base_repo)
     for fn in ("config.json", "speaker_encoder.onnx", "denoiser.onnx"):

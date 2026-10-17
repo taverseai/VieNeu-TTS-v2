@@ -110,7 +110,9 @@ class V3TurboVieNeuTTS(BaseVieneuTTS):
 
         if out_path is None:
             try:
-                secure_dir = Path.home() / ".cache" / "vieneu" / "tmp"
+                voice_home = os.environ.get("VIENEU_HOME")
+                secure_dir = ((Path(voice_home) / "tmp") if voice_home else
+                              Path.home() / ".cache" / "vieneu" / "tmp")
             except Exception:
                 secure_dir = Path("./outputs/tmp")
 

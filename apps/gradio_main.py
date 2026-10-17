@@ -138,6 +138,19 @@ if HAS_GPU:
         "description": "VieNeu-TTS Version 1 - ổn định, production-ready"
     }
 
+# Keep explicitly configured v3 Turbo models (including local fine-tunes).
+# Resolve local paths against config.yaml so launching from another cwd also works.
+for model_name, model_config in BACKBONE_CONFIGS.items():
+    if model_config.get("mode") != "v3turbo":
+        continue
+    configured_model = dict(model_config)
+    if configured_model.get("local"):
+        configured_model["repo"] = os.path.abspath(os.path.join(
+            os.path.dirname(CONFIG_PATH), configured_model["repo"]
+        ))
+    configured_model.setdefault("supports_streaming", False)
+    filtered_backbones[model_name] = configured_model
+
 BACKBONE_CONFIGS = filtered_backbones
 
 filtered_codecs = {
@@ -628,13 +641,31 @@ def load_model(backbone_choice: str, codec_choice: str, device_choice: str,
                     backbone_repo=backbone_config["repo"],
                     hf_token=custom_hf_token,
                 )
-            elif "v3-Turbo" in backbone_choice:
+            elif backbone_config.get("mode") == "v3turbo" or "v3-Turbo" in backbone_choice:
                 # VieNeu v3 Turbo. CPU → ONNX Runtime; GPU → PyTorch. The backend is
                 # auto-selected from the device inside Vieneu(mode="v3turbo"); ONNX
                 # graphs are fetched from the model repo's onnx/ subfolder.
                 print("   🆕 Mode: v3 Turbo (CPU=ONNX / GPU=PyTorch)")
                 # Map the app's device string to what the v3 engine understands.
                 v3_device = "cpu" if str(backbone_device).lower() == "cpu" else "auto"
+                v3_backend = backbone_config.get("backend", "auto")
+                if backbone_config.get("requires_cuda"):
+                    import torch
+                    if not torch.cuda.is_available():
+                        raise RuntimeError(
+                            "Model fine-tune này cần GPU NVIDIA và PyTorch CUDA. "
+                            "Cài môi trường GPU bằng: uv sync --extra cuda"
+                        )
+                    if str(backbone_device).lower() == "cpu":
+                        raise RuntimeError("Model fine-tune cần CUDA. Chọn Device Auto hoặc CUDA rồi tải lại model.")
+                    v3_device = "cuda"
+                    v3_backend = "pytorch"
+                if backbone_config.get("local"):
+                    weights = os.path.join(backbone_config["repo"],
+                                           backbone_config.get("model_subfolder", "update"),
+                                           "model.safetensors")
+                    if not os.path.isfile(weights):
+                        raise FileNotFoundError(f"Chưa tìm thấy model đã giải nén: {weights}")
                 # precision: "int8" (mặc định, subfolder onnx_int8) | "fp32" (onnx_update).
                 # Chỉ ảnh hưởng đường CPU/ONNX; trên GPU dùng PyTorch nên bỏ qua.
                 v3_precision = backbone_config.get("precision", "int8")
@@ -643,6 +674,8 @@ def load_model(backbone_choice: str, codec_choice: str, device_choice: str,
                     mode="v3turbo",
                     backbone_repo=backbone_config["repo"],
                     device=v3_device,
+                    backend=v3_backend,
+                    model_subfolder=backbone_config.get("model_subfolder", "update"),
                     precision=v3_precision,
                     hf_token=custom_hf_token,
                 )
@@ -1853,11 +1886,11 @@ with gr.Blocks(theme=theme, css=css, title="VieNeu-TTS", head=head_html) as demo
         # --- CONFIGURATION ---
         with gr.Group():
             with gr.Row():
-                # --- BACKBONE & CODEC DEFAULT LOGIC ---
-                # "VieNeu-TTS-v3-Turbo" (fp32) is the first entry on both CPU and GPU, so it is
-                # the default everywhere. The int8 Turbo build (CPU only) and v3 Nano (preview)
-                # are opt-in choices listed after it.
-                default_backbone = list(BACKBONE_CONFIGS.keys())[0]
+                # A configured default takes priority over the built-in first entry.
+                default_backbone = next(
+                    (name for name, config in BACKBONE_CONFIGS.items() if config.get("default")),
+                    next(iter(BACKBONE_CONFIGS)),
+                )
                 
                 # Default parameters based on backbone
                 if "v3" in default_backbone.lower():
