@@ -5,6 +5,10 @@
 #   docker run -p 7860:7860 -v hf_cache:/home/app/.cache/huggingface vieneu-tts:cpu
 FROM python:3.12-slim-bookworm
 
+# Complete-audio API: MP3/FLAC encoders and the Rubber Band tempo/pitch filter.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT="/opt/venv" \
     UV_LINK_MODE=copy \

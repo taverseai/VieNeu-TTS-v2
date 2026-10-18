@@ -74,9 +74,18 @@ import uvicorn
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from vieneu import Vieneu
+from apps.tts_contract import RenderContext, TtsError, TtsSettings
+from apps.tts_api import (
+    VoiceProMiddleware, create_router, error_response, is_voice_pro_request,
+    render_response, snapshot_voice,
+)
+from apps.speech_service import SpeechService
+from apps.voice_registry import VoiceRegistry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vieneu.api")
@@ -99,6 +108,9 @@ class Engine:
     """The model plus the admission gate (how many streams run at once)."""
 
     def __init__(self):
+        voice_pro = os.environ.get("VIENEU_VOICE_PRO_ENABLED", "0") == "1"
+        if voice_pro and not os.environ.get("VIENEU_API_KEY"):
+            raise ValueError("VIENEU_API_KEY is required for the Voice-Pro profile")
         backend = os.environ.get("VIENEU_BACKEND", "auto")
         device = os.environ.get("VIENEU_DEVICE", "auto")
         kw: dict = dict(backend=backend, device=device,
@@ -125,6 +137,8 @@ class Engine:
             self.max_streams = _env_int("VIENEU_MAX_STREAMS", cpu_default) if "VIENEU_MAX_STREAMS" in os.environ else cpu_default
         self.max_queue = _env_int("VIENEU_QUEUE", self.max_streams)
         self.queue_timeout = float(os.environ.get("VIENEU_QUEUE_TIMEOUT", "10"))
+        self.tts_settings = TtsSettings.from_env(self.max_streams) if voice_pro else None
+        self.registry: Optional[VoiceRegistry] = None
         self._gate = threading.BoundedSemaphore(self.max_streams)
         self._lock = threading.Lock()
         self.active = 0
@@ -133,21 +147,50 @@ class Engine:
         # first client pays for it.
         for _ in self.tts.infer_stream("Xin chào.", apply_watermark=False):
             pass
+        self.speech_service = SpeechService(self, self.tts_settings) if self.tts_settings else None
+        if self.speech_service is not None and self.tts_settings is not None:
+            try:
+                self.registry = VoiceRegistry(self.tts, self.tts_settings.home)
+            except BaseException:
+                self.speech_service.close()
+                raise
         log.info("✅ ready in %.1fs: backend=%s max_streams=%d queue=%d", time.perf_counter() - t,
                  self.backend, self.max_streams, self.max_queue)
 
-    def acquire(self) -> None:
+    def enter_queue(self) -> None:
         with self._lock:
             if self.waiting >= self.max_queue:
-                raise HTTPException(429, "server busy: queue full", headers={"Retry-After": "1"})
+                raise TtsError(429, "server_busy", "Server queue is full.")
             self.waiting += 1
+
+    def leave_queue(self) -> None:
+        with self._lock:
+            self.waiting -= 1
+
+    def acquire_capacity(self, gate: threading.Semaphore, context: RenderContext) -> None:
+        context.check()
+        if gate.acquire(blocking=False):
+            return
+        self.enter_queue()
         try:
-            if not self._gate.acquire(timeout=self.queue_timeout):
-                raise HTTPException(429, "server busy: timed out waiting for a stream slot",
-                                    headers={"Retry-After": "2"})
+            end = min(context.deadline, time.monotonic() + self.queue_timeout)
+            while True:
+                context.check()
+                left = end - time.monotonic()
+                if left <= 0:
+                    raise TtsError(429, "server_busy", "Timed out waiting for server capacity.")
+                if gate.acquire(timeout=min(0.05, left)):
+                    return
         finally:
-            with self._lock:
-                self.waiting -= 1
+            self.leave_queue()
+
+    def acquire(self, context: Optional[RenderContext] = None) -> None:
+        try:
+            self.acquire_capacity(self._gate, context or RenderContext(self.queue_timeout + 1))
+        except TtsError as exc:
+            if context is not None:
+                raise
+            raise HTTPException(429, str(exc), headers={"Retry-After": "2"}) from exc
         with self._lock:
             self.active += 1
 
@@ -162,11 +205,15 @@ class Engine:
         return getattr(self.sched, "error", None) if self.sched is not None else None
 
     def voices(self) -> list:
+        if self.registry is not None:
+            return self.registry.list_voices()
         out = []
         for name, v in self.tts._preset_voices.items():
             out.append({"id": name, "name": name, "description": v.get("description", ""),
                         "gender": v.get("gender", ""), "featured": v.get("featured"),
-                        "aliases": list(v.get("aliases") or [])})
+                        "aliases": list(v.get("aliases") or []),
+                        **({"locale": v.get("locale", "vi-VN"), "formats": ["mp3", "wav", "flac"]}
+                           if self.tts_settings else {})})
         return out
 
 
@@ -213,8 +260,12 @@ def _error(status: int, message: str, code: Optional[str] = None, headers=None) 
 app = FastAPI(title="VieNeu-TTS speech API", version="1.0")
 
 
-@app.exception_handler(HTTPException)
-async def _http_exc(_req: Request, exc: HTTPException):
+@app.exception_handler(StarletteHTTPException)
+async def _http_exc(_req: Request, exc: StarletteHTTPException):
+    if is_voice_pro_request(_req):
+        code = {401: "invalid_api_key", 404: "not_found", 409: "invalid_request",
+                413: "request_too_large", 429: "server_busy", 503: "engine_unavailable"}.get(exc.status_code, "invalid_request")
+        return error_response(_req, TtsError(exc.status_code, code, str(exc.detail)))
     return _error(exc.status_code, str(exc.detail), headers=exc.headers)
 
 
@@ -226,12 +277,20 @@ async def _invalid_request(_req: Request, exc: RequestValidationError):
     first = errs[0] if errs else {}
     field = ".".join(str(p) for p in first.get("loc", ()) if p not in ("body", "query", "header"))
     msg = first.get("msg", "invalid request")
+    if is_voice_pro_request(_req):
+        return error_response(_req, TtsError(400, "invalid_request", msg, field or None))
     return _error(400, f"{field}: {msg}" if field else msg)
 
 
 @app.on_event("startup")
 def _startup() -> None:
     engine()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    if ENGINE is not None and ENGINE.speech_service is not None:
+        await run_in_threadpool(ENGINE.speech_service.close)
 
 
 # ── audio helpers ────────────────────────────────────────────────────────────
@@ -278,6 +337,7 @@ class SpeechRequest(BaseModel):
     voice: Optional[str] = None
     response_format: str = "wav"
     stream_format: str = "audio"
+    stream: bool = Field(default=True, strict=True)
     speed: Optional[float] = None
     instructions: Optional[str] = None
     sample_rate: int = SAMPLE_RATE
@@ -342,7 +402,6 @@ def _sse_body(chunks: Iterator[np.ndarray], fmt: str, rate: int) -> Iterator[byt
               "usage": {"output_samples": n, "sample_rate": rate, "seconds": round(n / rate, 3)}})
 
 
-@app.post("/v1/audio/speech", dependencies=[Depends(_auth)])
 def speech(req: SpeechRequest):
     eng = engine()
     fmt = req.response_format.lower()
@@ -375,6 +434,36 @@ def speech(req: SpeechRequest):
     return StreamingResponse(_audio_body(chunks, fmt, req.sample_rate), media_type=media, headers=headers)
 
 
+@app.post("/v1/audio/speech", dependencies=[Depends(_auth)])
+async def speech_endpoint(request: Request, req: SpeechRequest):
+    if req.stream:
+        return await run_in_threadpool(speech, req)
+    eng = engine()
+    request.state.tts_started = time.monotonic()
+    service, registry = eng.speech_service, eng.registry
+    if service is None or registry is None:
+        raise HTTPException(400, "stream=false requires VIENEU_VOICE_PRO_ENABLED=1")
+    fmt = req.response_format.lower()
+    if fmt not in ("pcm", "wav") or req.stream_format != "audio" or req.sample_rate not in RATES:
+        raise HTTPException(400, "complete audio requires pcm/wav, stream_format=audio and a supported sample_rate")
+    if len(req.input) > service.settings.max_text_chars:
+        raise HTTPException(413, "text exceeds the configured character limit")
+    if not req.input.strip():
+        raise HTTPException(400, "input must contain a non-whitespace character")
+    if eng.stream_error() is not None:
+        raise HTTPException(503, "speech engine is unavailable")
+    voice_id = req.voice or getattr(eng.tts, "_default_voice", None) or eng.voices()[0]["id"]
+    voice = await snapshot_voice(request, service, voice_id)
+    response = await render_response(request, service, text=req.input, voice=voice,
+                                     fmt=fmt, sample_rate=req.sample_rate, temperature=req.temperature,
+                                     max_chars=req.max_chars, top_k=req.top_k, top_p=req.top_p,
+                                     repetition_penalty=req.repetition_penalty)
+    ignored = [k for k in ("speed", "instructions") if getattr(req, k) is not None]
+    if ignored:
+        response.headers["X-VieNeu-Ignored"] = ",".join(ignored)
+    return response
+
+
 # ── discovery ────────────────────────────────────────────────────────────────
 
 @app.get("/v1/models", dependencies=[Depends(_auth)])
@@ -403,7 +492,7 @@ _MAX_CLIP_BYTES = 20 * 1024 * 1024
 
 @app.post("/v1/voices", dependencies=[Depends(_auth)])
 def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool = Form(True),
-              description: str = Form("")):
+              description: str = Form(""), locale: str = Form("vi-VN"), gender: str = Form("unknown")):
     """Enroll a 3-8 s reference clip as ``voice=name`` (in memory, for this process).
 
     Plain ``def``: FastAPI runs it in a thread, so the blocking upload read,
@@ -415,6 +504,9 @@ def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool
         raise HTTPException(400, "voice name: 1-64 letters, digits, spaces, '.', '-' or '_'")
     if not _VOICE_NAME.fullmatch(description or "x"):
         raise HTTPException(400, "description: 1-64 letters, digits, spaces, '.', '-' or '_'")
+    if eng.registry is not None and (not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", locale)
+                                     or gender not in ("male", "female", "unknown")):
+        raise TtsError(400, "invalid_request", "Invalid voice locale or gender.")
     if name in eng.builtin_voices:
         # add_voice would replace it for every client, including the default voice.
         raise HTTPException(409, f"'{name}' is a built-in voice; choose another name")
@@ -427,10 +519,22 @@ def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+        if eng.registry is not None:
+            eng.acquire(context=RenderContext(eng.queue_timeout + 1))
+            try:
+                return eng.registry.enroll(name, path, denoise=denoise, description=description,
+                                           locale=locale, gender=gender)
+            finally:
+                eng.release()
         eng.tts.add_voice(name, path, denoise=denoise, description=description)
+    except TtsError:
+        raise
     except HTTPException:
         raise
     except Exception as e:   # noqa: BLE001
+        if eng.registry is not None:
+            log.exception("Voice enrollment failed")
+            raise TtsError(500, "synthesis_failed", "Voice enrollment failed.") from e
         raise HTTPException(400, f"could not enroll voice: {e}")
     finally:
         os.unlink(path)
@@ -443,6 +547,8 @@ def health():
     body = {"status": "ok", "backend": eng.backend, "max_streams": eng.max_streams,
             "active": eng.active, "waiting": eng.waiting, "sample_rate": SAMPLE_RATE}
     err = eng.stream_error()
+    if eng.speech_service is not None and not eng.speech_service.healthy():
+        return JSONResponse({**body, "status": "error", "error": "audio encoder or storage unavailable"}, status_code=503)
     if err is not None:
         # 503 so a container healthcheck restarts us: the scheduler does not recover.
         return JSONResponse({**body, "status": "error", "error": f"stream scheduler is down: {err!r}"},
@@ -459,6 +565,17 @@ def main() -> None:
                     "can use the API and enroll voices", host, port)
     # One worker: the model (and on GPU the scheduler) is process-local.
     uvicorn.run(app, host=host, port=port, workers=1, log_level="info")
+
+
+app.include_router(create_router(engine, _auth))
+app.add_middleware(VoiceProMiddleware, get_engine=engine)
+
+
+@app.exception_handler(TtsError)
+async def _tts_error(request: Request, exc: TtsError):
+    if is_voice_pro_request(request):
+        return error_response(request, exc)
+    return _error(exc.status, str(exc), headers={"Retry-After": "2"} if exc.status == 429 else None)
 
 
 if __name__ == "__main__":

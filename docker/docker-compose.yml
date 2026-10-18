@@ -79,11 +79,14 @@ services:
       - VIENEU_QUEUE_TIMEOUT=${VIENEU_QUEUE_TIMEOUT:-10}
       - VIENEU_API_KEY=${VIENEU_API_KEY:-}
       - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
+      - VIENEU_VOICE_PRO_ENABLED=${VIENEU_VOICE_PRO_ENABLED:-0}
+      - VIENEU_HOME=/home/app/.vieneu
     env_file:
       - path: .env
         required: false
     volumes:
       - huggingface_cache:/home/app/.cache/huggingface
+      - api_data:/home/app/.vieneu
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
       interval: 15s
@@ -119,11 +122,14 @@ services:
       - VIENEU_QUEUE_TIMEOUT=${VIENEU_QUEUE_TIMEOUT:-10}
       - VIENEU_API_KEY=${VIENEU_API_KEY:-}
       - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
+      - VIENEU_VOICE_PRO_ENABLED=${VIENEU_VOICE_PRO_ENABLED:-0}
+      - VIENEU_HOME=/home/app/.vieneu
     env_file:
       - path: .env
         required: false
     volumes:
       - huggingface_cache:/home/app/.cache/huggingface
+      - api_data:/home/app/.vieneu
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
       interval: 15s
@@ -168,3 +174,4 @@ services:
 
 volumes:
   huggingface_cache:
+  api_data:

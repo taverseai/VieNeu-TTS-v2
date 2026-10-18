@@ -1,0 +1,514 @@
+openapi: 3.1.0
+info:
+  title: VieNeu-TTS Voice-Pro interface
+  version: 1.0.0
+  description: >-
+    Design contract, not a statement of currently deployed functionality.
+    Enabled by the Voice-Pro server profile alongside the existing OpenAI routes.
+    The base URL excludes /v1. See tts-api-design.vi.md for lifecycle,
+    operational limits, deployment, and Voice-Pro adapter requirements.
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+paths:
+  /v1/tts:
+    post:
+      operationId: renderSpeech
+      summary: Return a complete audio file after synthesis and encoding finish
+      description: >-
+        Independent requests. No SSML, result URLs, asynchronous jobs, or
+        idempotency guarantee. Returns no success headers until the file is ready.
+        A retry may produce different samples and repeat synthesis work.
+        Missing Accept or */* is allowed; otherwise Accept must permit the
+        selected format's MIME type. JSON body limit defaults to 262144 bytes.
+      parameters:
+        - in: header
+          name: Accept
+          schema:
+            type: string
+          description: Must permit audio/mpeg, audio/wav, or audio/flac as selected by format.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SynthesisRequest'
+            example:
+              text: Xin chào, đây là câu cần đọc.
+              voice: Trúc Ly
+              rate: 0
+              volume: 0
+              pitch: 0
+              format: mp3
+      responses:
+        '200':
+          description: >-
+            Complete mono 48 kHz audio file, validated before returning success.
+            MP3 is 192 kbit/s; WAV and FLAC encode 16-bit samples.
+            Muted but nonempty audio is valid when volume=-100.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            X-Sample-Rate:
+              schema:
+                type: integer
+                const: 48000
+            X-Audio-Duration:
+              description: Decoded audio duration in seconds.
+              schema:
+                type: number
+                exclusiveMinimum: 0
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 1
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="speech-tts_example.mp3"
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VoiceNotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '500':
+          $ref: '#/components/responses/ProcessingError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/Timeout'
+  /v1/voices:
+    get:
+      operationId: listVoices
+      summary: List stable voice IDs with locale and display metadata
+      description: >-
+        Extends the existing OpenAI-style object/data envelope. Does not change
+        existing IDs. Voice-Pro reads data, not a voices property. This document
+        specifies only listing; existing voice enrollment remains a separate route.
+      responses:
+        '200':
+          description: Shared built-in and enrolled voices.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    type: string
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Voice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/tts/capabilities:
+    get:
+      operationId: getTtsCapabilities
+      summary: Discover effective runtime limits and control units
+      description: >-
+        Returns actual instance settings, which can differ from documented
+        defaults. Null requests_per_minute means no time-based request quota;
+        bounded concurrency and queues still apply.
+      responses:
+        '200':
+          description: Capabilities of the enabled Voice-Pro profile.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: VIENEU_API_KEY. Required when the Voice-Pro profile is enabled.
+  headers:
+    RequestId:
+      description: Server-generated correlation ID, also present on error responses.
+      schema:
+        type: string
+      example: tts_example
+    RetryAfter:
+      description: Minimum delay in seconds before retrying.
+      schema:
+        type: integer
+        minimum: 1
+  schemas:
+    SynthesisRequest:
+      type: object
+      additionalProperties: false
+      required: [text, voice]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: >-
+            Plain Unicode text, not SSML. Must contain a non-whitespace character.
+            Count decoded Unicode code points before normalization. Overlong text
+            returns 413 text_too_long, not a generic 400 schema validation error.
+            The effective limit is also published in capabilities.
+        voice:
+          type: string
+          minLength: 1
+          description: Exact stable voice ID from GET /v1/voices; required even if a default exists.
+        rate:
+          type: number
+          minimum: -90
+          maximum: 200
+          default: 0
+          description: Percent tempo change; tempo factor = 1 + rate/100.
+        volume:
+          type: number
+          minimum: -100
+          maximum: 100
+          default: 0
+          description: >-
+            Percent amplitude change; gain = 1 + volume/100. -100 mutes without
+            removing duration. Peak limiter at -1 dBFS can reduce the requested gain.
+        pitch:
+          type: number
+          minimum: -400
+          maximum: 400
+          default: 0
+          description: >-
+            Relative pitch shift in cents, NOT Hz. 100 cents = one semitone.
+            Pitch factor = 2^(pitch/1200). Voice-Pro must update its UI units.
+        format:
+          type: string
+          enum: [mp3, wav, flac]
+          default: mp3
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.8
+        max_chars:
+          type: integer
+          minimum: 64
+          maximum: 512
+          default: 256
+          description: Maximum text-chunk length for internal synthesis.
+      description: >-
+        Strict input types. Numeric strings, booleans as numbers, nulls, non-finite
+        numbers and unknown fields are rejected. Missing optional fields use defaults.
+    Voice:
+      type: object
+      required: [id, name, locale, gender, formats]
+      properties:
+        id:
+          type: string
+          description: Stable across restarts; existing preset IDs are preserved.
+          example: Trúc Ly
+        name:
+          type: string
+          example: Trúc Ly
+        locale:
+          type: string
+          description: BCP-47 locale declared in voice metadata.
+          example: vi-VN
+        gender:
+          type: string
+          enum: [male, female, unknown]
+        formats:
+          type: array
+          items:
+            type: string
+            enum: [mp3, wav, flac]
+          uniqueItems: true
+        description:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+      additionalProperties: true
+    Control:
+      type: object
+      required: [min, max, default, unit]
+      properties:
+        min:
+          type: number
+        max:
+          type: number
+        default:
+          type: number
+        unit:
+          type: string
+    Capabilities:
+      type: object
+      required:
+        - api_version
+        - model
+        - formats
+        - sample_rate
+        - channels
+        - response_mode
+        - max_text_chars
+        - text_length_unit
+        - max_request_bytes
+        - ssml
+        - controls
+        - request_timeout_seconds
+        - queue_timeout_seconds
+        - max_audio_seconds
+        - max_output_bytes
+        - max_streams
+        - max_queue
+        - max_complete_requests
+        - encoding_workers
+        - rate_limit
+        - result_url_ttl_seconds
+      properties:
+        api_version:
+          type: string
+          const: '1.0'
+        model:
+          type: string
+          const: vieneu-v3-turbo
+        formats:
+          type: array
+          items:
+            type: string
+            enum: [mp3, wav, flac]
+          uniqueItems: true
+          example: [mp3, wav, flac]
+        sample_rate:
+          type: integer
+          const: 48000
+        channels:
+          type: integer
+          const: 1
+        response_mode:
+          type: string
+          const: file
+        max_text_chars:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          example: 20000
+        text_length_unit:
+          type: string
+          const: unicode_code_points
+        max_request_bytes:
+          type: integer
+          minimum: 1
+          example: 262144
+        ssml:
+          type: boolean
+          const: false
+        controls:
+          type: object
+          required: [rate, volume, pitch, temperature, max_chars]
+          properties:
+            rate:
+              $ref: '#/components/schemas/Control'
+            volume:
+              $ref: '#/components/schemas/Control'
+            pitch:
+              $ref: '#/components/schemas/Control'
+            temperature:
+              $ref: '#/components/schemas/Control'
+            max_chars:
+              $ref: '#/components/schemas/Control'
+          example:
+            rate: {min: -90, max: 200, default: 0, unit: percent}
+            volume: {min: -100, max: 100, default: 0, unit: percent_amplitude}
+            pitch: {min: -400, max: 400, default: 0, unit: cent}
+            temperature: {min: 0, max: 2, default: 0.8, unit: sampling_temperature}
+            max_chars: {min: 64, max: 512, default: 256, unit: unicode_code_points}
+        request_timeout_seconds:
+          type: number
+          exclusiveMinimum: 0
+          example: 300
+        queue_timeout_seconds:
+          type: number
+          minimum: 0
+          example: 10
+        max_audio_seconds:
+          type: number
+          exclusiveMinimum: 0
+          example: 600
+        max_output_bytes:
+          type: integer
+          minimum: 1
+          example: 67108864
+        max_streams:
+          type: integer
+          minimum: 1
+        max_queue:
+          type: integer
+          minimum: 0
+        max_complete_requests:
+          type: integer
+          minimum: 1
+        encoding_workers:
+          type: integer
+          minimum: 1
+        rate_limit:
+          type: object
+          required: [requests_per_minute, policy]
+          properties:
+            requests_per_minute:
+              type: 'null'
+            policy:
+              type: string
+              const: concurrency_and_bounded_queue
+        result_url_ttl_seconds:
+          type: 'null'
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, type, message, param, request_id]
+          properties:
+            code:
+              type: string
+              description: Stable application error code, not the numeric HTTP status.
+            type:
+              type: string
+              enum: [invalid_request_error, authentication_error, server_error, rate_limit_error]
+            message:
+              type: string
+            param:
+              type: [string, 'null']
+            request_id:
+              type: string
+  responses:
+    BadRequest:
+      description: invalid_request, unsupported_format, or unsupported_parameter. Do not retry unchanged.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: invalid_api_key. Missing or invalid Bearer token.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    VoiceNotFound:
+      description: voice_not_found. Refresh the voice list before choosing another ID.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotAcceptable:
+      description: not_acceptable. Accept does not permit the requested audio format.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: request_too_large, text_too_long, or audio_too_large. Split input; do not truncate silently.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: unsupported_media_type. Use application/json with a UTF-8 body.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Busy:
+      description: server_busy. Bounded capacity is exhausted or queue wait timed out. Retry-After defaults to 2.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ProcessingError:
+      description: synthesis_failed, encoding_failed, invalid_audio, or internal_error. Bounded retry allowed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: engine_unavailable. Engine or required temporary storage unavailable. Retry-After defaults to 5.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Timeout:
+      description: synthesis_timeout. The request deadline expired before an audio file was ready.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

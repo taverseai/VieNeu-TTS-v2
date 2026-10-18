@@ -24,3 +24,11 @@ A segment of generated audio that can be returned while synthesis is still in pr
 **Batch size**:
 The server's capacity for processing concurrent speech synthesis streams.
 _Avoid_: Number of text chunks in one request
+
+**Speaking rate**:
+The relative playback tempo of synthesized speech, expressed as a percentage change from the original tempo.
+_Avoid_: Sample rate
+
+**Pitch shift**:
+A relative change in the perceived pitch of synthesized speech, expressed in cents; 100 cents equal one semitone.
+_Avoid_: Pitch in Hz (for a relative shift without a reference frequency)
