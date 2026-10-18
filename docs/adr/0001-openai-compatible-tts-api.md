@@ -1,0 +1,3 @@
+# Keep the TTS API OpenAI-compatible and configure one engine per server
+
+The current API initializes one speech engine when the server starts, so v1 keeps the existing `POST /v1/audio/speech` contract and runs v3 Turbo with Backbone, Device, and concurrent-stream capacity configured at server level. Requests select text, an optional registered voice, and per-request sampling and chunking settings; streaming remains the default with an opt-out for complete audio, and enrolled voices are persisted in a shared server registry. This preserves existing clients and gives each server one clear model and resource boundary; API-key enforcement remains configurable for local and networked deployments.

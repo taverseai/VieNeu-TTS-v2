@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
 
+from apps.audio_output import write_generated_audio
+
 import numpy as np
 import soundfile as sf
 
@@ -116,14 +118,13 @@ def concatenate(clips: list[np.ndarray], sr: int, gap_s: float = 0.5) -> np.ndar
 
 def write_audio(track: np.ndarray, sr: int, fmt: str) -> tuple[str, str]:
     """Write to a temp file; MP3 when libsndfile can, else WAV. Returns (path, note)."""
-    peak = float(np.abs(track).max()) if track.size else 0.0
-    if peak > 0.98:
-        track = track * (0.98 / peak)
     if fmt.lower() == "mp3" and "MP3" in sf.available_formats():
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tmp.close()
         try:
-            sf.write(tmp.name, track, sr, format="MP3")
+            peak = float(np.abs(track).max()) if track.size else 0.0
+            mp3_track = track * (0.98 / peak) if peak > 0.98 else track
+            sf.write(tmp.name, mp3_track, sr, format="MP3")
             return tmp.name, ""
         except Exception as e:  # noqa: BLE001 — fall back to WAV below
             note = f" (MP3 không ghi được: {e}; đã xuất WAV)"
@@ -132,7 +133,7 @@ def write_audio(track: np.ndarray, sr: int, fmt: str) -> tuple[str, str]:
         note = " (MP3 không khả dụng trên máy này; đã xuất WAV)" if fmt.lower() == "mp3" else ""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     tmp.close()
-    sf.write(tmp.name, track, sr)
+    write_generated_audio(tmp.name, track, sr)
     return tmp.name, note
 
 

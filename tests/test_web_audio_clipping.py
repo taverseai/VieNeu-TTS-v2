@@ -9,6 +9,8 @@ import numpy as np
 import soundfile as sf
 
 from apps import gradio_main as web
+from apps.audio_output import balance_audio, write_generated_audio
+import tempfile
 
 
 class WebAudioClippingTests(unittest.TestCase):
@@ -34,22 +36,52 @@ class WebAudioClippingTests(unittest.TestCase):
         output = next((path for path, status in results if path), None)
         self.assertIsNotNone(output, results)
         try:
-            saved, saved_sr = sf.read(output)
+            self.assertEqual(sf.info(output).subtype, "FLOAT")
+            saved, saved_sr = sf.read(output, dtype="float32")
+            balanced_path = balance_audio(output)
+            try:
+                self.assertEqual(sf.info(balanced_path).subtype, "PCM_24")
+                balanced, balanced_sr = sf.read(balanced_path)
+                self.assertEqual(balanced_sr, sr)
+                self.assertEqual(len(balanced), len(waveform))
+                np.testing.assert_array_equal(sf.read(output, dtype="float32")[0], waveform)
+            finally:
+                Path(balanced_path).unlink(missing_ok=True)
         finally:
             Path(output).unlink(missing_ok=True)
         self.assertEqual(saved_sr, sr)
         self.assertEqual(len(saved), len(waveform))
-        return waveform, saved
+        return waveform, saved, balanced
 
     def test_over_range_codec_output_keeps_wave_shape_without_clipping(self):
-        source, saved = self.export(1.4)
-        self.assertLessEqual(float(np.abs(saved).max()), 0.981)
+        source, saved, balanced = self.export(1.4)
+        np.testing.assert_array_equal(saved, source)
+        self.assertGreater(float(np.abs(saved).max()), 1)
+        self.assertLessEqual(float(np.abs(balanced).max()), 0.981)
         expected = source * (0.98 / np.abs(source).max())
-        np.testing.assert_allclose(saved, expected, atol=1 / 32768)
+        np.testing.assert_allclose(balanced, expected, atol=1 / 8388608)
 
     def test_quiet_codec_output_keeps_its_volume(self):
-        source, saved = self.export(0.3)
-        np.testing.assert_allclose(saved, source, atol=1 / 32768)
+        source, saved, balanced = self.export(0.3)
+        np.testing.assert_array_equal(saved, source)
+        np.testing.assert_allclose(balanced, source, atol=1 / 8388608)
+
+    def test_balance_preserves_stereo_and_silence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "original.wav"
+            for samples in [np.zeros((100, 2), dtype=np.float32),
+                            np.array([[1.5, -0.5], [0.25, -1.2]], dtype=np.float32)]:
+                write_generated_audio(path, samples, 24000)
+                output = balance_audio(path)
+                try:
+                    balanced, sr = sf.read(output, always_2d=True)
+                    self.assertEqual(sr, 24000)
+                    self.assertEqual(balanced.shape, samples.shape)
+                    peak = float(np.abs(samples).max())
+                    expected = samples * (0.98 / peak) if peak > 0.98 else samples
+                    np.testing.assert_allclose(balanced, expected, atol=1 / 8388608)
+                finally:
+                    Path(output).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
