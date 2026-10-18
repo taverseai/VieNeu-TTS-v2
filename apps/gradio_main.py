@@ -35,6 +35,8 @@ except ImportError:
     fitz = None
 
 from apps.srt_speech import srt_to_speech
+from apps.audio_enhancement import enhance_audio
+from apps.audio_output import write_generated_audio
 from apps.user_voices import (
     load_user_voices, save_user_voice, delete_user_voice, list_user_voices, supports_saving,
 )
@@ -1086,7 +1088,7 @@ def synthesize_speech(text: str, voice_choice: str, custom_audio, custom_text: s
                 yield None, "❌ Không sinh được audio nào."
                 return
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                sf.write(tmp.name, wav, sr_v3)
+                write_generated_audio(tmp.name, wav, sr_v3)
                 out_path_v3 = tmp.name
             _dt = time.time() - _t0
             _spd = f", Tốc độ: {len(wav)/sr_v3/_dt:.2f}x realtime" if _dt > 0 else ""
@@ -1230,7 +1232,7 @@ def synthesize_speech(text: str, voice_choice: str, custom_audio, custom_text: s
             final_wav = join_audio_chunks(all_wavs, sr=sr, silence_p=silence_p)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                sf.write(tmp.name, final_wav, sr)
+                write_generated_audio(tmp.name, final_wav, sr)
                 output_path = tmp.name
             
             process_time = time.time() - start_time
@@ -1409,7 +1411,7 @@ def synthesize_speech(text: str, voice_choice: str, custom_audio, custom_text: s
         if full_audio_buffer:
             final_wav = np.concatenate(full_audio_buffer)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                sf.write(tmp.name, final_wav, sr)
+                write_generated_audio(tmp.name, final_wav, sr)
                 
                 yield tmp.name, f"✅ Hoàn tất Streaming! ({backend_info})"
             
@@ -1500,7 +1502,7 @@ def _synthesize_conversation_v3(lines, mapping, temperature, max_chars_chunk, si
         yield None, "🪄 Đang ghép nối âm thanh..."
         final_wav = np.concatenate(all_wavs)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            sf.write(tmp.name, final_wav, sr)
+            write_generated_audio(tmp.name, final_wav, sr)
             yield tmp.name, f"✅ Hoàn tất hội thoại! ({len(lines)} câu, {time.time()-t0:.1f}s, CPU tuần tự)"
         cleanup_gpu_memory()
         return
@@ -1568,7 +1570,7 @@ def _synthesize_conversation_v3(lines, mapping, temperature, max_chars_chunk, si
     yield None, "🪄 Đang ghép nối âm thanh..."
     final_wav = np.concatenate(all_wavs)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        sf.write(tmp.name, final_wav, sr)
+        write_generated_audio(tmp.name, final_wav, sr)
         elapsed = time.time() - t0
         yield tmp.name, f"✅ Hoàn tất hội thoại! ({len(lines)} câu, {len(reqs)} đoạn, {elapsed:.1f}s, batch 32)"
     cleanup_gpu_memory()
@@ -1745,7 +1747,7 @@ def synthesize_conversation(
         final_wav = np.concatenate(all_wavs)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            sf.write(tmp.name, final_wav, sr)
+            write_generated_audio(tmp.name, final_wav, sr)
             elapsed = time.time() - start_time
             yield tmp.name, f"✅ Hoàn tất hội thoại! ({total_lines} câu, xử lý trong {elapsed:.1f}s)"
             
@@ -2281,6 +2283,24 @@ with gr.Blocks(theme=theme, css=css, title="VieNeu-TTS", head=head_html) as demo
                     visible=False,
                     elem_classes="download-btn"
                 )
+                with gr.Group():
+                    gr.Markdown("**Làm sạch giọng nói** — giảm rè và nhiễu từ audio đã tạo.")
+                    enhancement_strength = gr.Slider(
+                        minimum=0.1, maximum=1.0, value=0.65, step=0.05,
+                        label="Mức khử nhiễu",
+                        info="Giảm mức này nếu giọng bị mất chi tiết hoặc nghe thiếu tự nhiên.",
+                    )
+                    btn_enhance = gr.Button("✨ Cải thiện audio", interactive=False)
+                    enhanced_audio = gr.Audio(
+                        label="Audio đã cải thiện", type="filepath", interactive=False,
+                    )
+                    enhancement_status = gr.Textbox(
+                        label="Trạng thái cải thiện", interactive=False,
+                    )
+                    enhanced_download = gr.DownloadButton(
+                        "📥 Tải audio đã cải thiện", visible=False,
+                    )
+                    enhancement_result = gr.State(None)
                 # Only claim a watermark when the real watermarker (resemble-perth) is importable —
                 # otherwise the SDK silently skips watermarking (issue #191).
                 gr.Markdown(
@@ -2578,6 +2598,64 @@ with gr.Blocks(theme=theme, css=css, title="VieNeu-TTS", head=head_html) as demo
         btn_stop.click(fn=request_stop, outputs=[audio_output, status_output, estimate_output, btn_stop])
 
         # --- Download Button Event Handlers ---
+        def reset_enhancement(audio_path):
+            available = bool(audio_path and os.path.isfile(audio_path))
+            return gr.update(interactive=available), None, "", gr.update(value=None, visible=False)
+
+        audio_output.change(
+            fn=reset_enhancement,
+            inputs=[audio_output],
+            outputs=[btn_enhance, enhanced_audio, enhancement_status, enhanced_download],
+        )
+
+        def improve_generated_audio(audio_path, strength, progress=gr.Progress()):
+            yield None, None, "⏳ Đang xử lý audio…", gr.update(value=None, visible=False)
+            try:
+                clipped = False
+                if audio_path and os.path.isfile(audio_path):
+                    original, _ = sf.read(audio_path, dtype="float32")
+                    clipped = bool(original.size and np.mean(np.abs(original) >= 0.999) > 0.001)
+                path = enhance_audio(audio_path, strength, progress=progress)
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                result = (audio_path, None, f"Không thể cải thiện audio: {exc}")
+            else:
+                message = "✅ Đã xử lý khử nhiễu. Hãy nghe so sánh với bản gốc."
+                if clipped:
+                    message += (
+                        "\n⚠️ Bản gốc có dấu hiệu bị cắt đỉnh âm lượng (clipping). "
+                        "Khử nhiễu không phục hồi được phần sóng đã mất; "
+                        "hãy tạo lại audio để áp dụng bước chống clipping."
+                    )
+                result = (audio_path, path, message)
+            yield result, gr.skip(), gr.skip(), gr.skip()
+
+        def publish_enhancement(result, current_audio):
+            # A new generation may finish while denoising is running. Never show
+            # an older result as the improved version of the newly generated clip.
+            if result is None:
+                return gr.skip(), gr.skip(), gr.skip()
+            source, path, message = result
+            if source != current_audio:
+                if path:
+                    os.unlink(path)
+                return gr.skip(), gr.skip(), gr.skip()
+            return path, message, gr.update(value=path, visible=bool(path))
+
+        btn_enhance.click(
+            fn=improve_generated_audio,
+            inputs=[audio_output, enhancement_strength],
+            outputs=[enhancement_result, enhanced_audio, enhancement_status, enhanced_download],
+            concurrency_limit=1,
+            concurrency_id="audio_enhancement",
+            trigger_mode="once",
+        ).then(
+            fn=publish_enhancement,
+            inputs=[enhancement_result, audio_output],
+            outputs=[enhanced_audio, enhancement_status, enhanced_download],
+        )
+
         def on_audio_generated(audio_path):
             """Show download button when audio is generated."""
             if audio_path and os.path.exists(audio_path):

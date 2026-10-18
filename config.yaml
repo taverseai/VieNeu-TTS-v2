@@ -3,6 +3,15 @@ text_settings:
   max_total_chars_streaming: 3000
 
 backbone_configs:
+  "VieNeu-TTS-v3-Turbo — Alan (GPU)":
+    mode: v3turbo
+    repo: finetune/voices/alan/merged
+    local: true
+    backend: pytorch
+    requires_cuda: true
+    model_subfolder: update
+    supports_streaming: false
+    description: "Giọng Alan đã fine-tune bằng LoRA. Dùng GPU NVIDIA/CUDA và giọng dựng sẵn Alan."
   "VieNeu-TTS-v3-Turbo — Đạt Phi 03 (GPU)":
     mode: v3turbo
     repo: finetune/voices/dat_phi_03/merged
