@@ -59,8 +59,17 @@ def test_voice_pro_can_discover_controls_and_stable_voice_ids(client):
     assert capability["formats"] == ["mp3", "wav", "flac"]
     assert capability["controls"]["pitch"]["unit"] == "cent"
     assert capability["max_text_chars"] == 20_000
+    assert capability["backbone"] == "v3turbo"
     voice = client.get("/v1/voices").json()["data"][0]
     assert (voice["id"], voice["locale"]) == ("Trúc Ly", "vi-VN")
+
+
+@pytest.mark.parametrize("backbone", ["v3nano", "standard", ""])
+def test_unsupported_backbone_is_rejected_on_startup(configured, monkeypatch, backbone):
+    monkeypatch.setenv("VIENEU_BACKBONE", backbone)
+    with pytest.raises(ValueError, match="VIENEU_BACKBONE.*v3turbo"):
+        with TestClient(api.app):
+            pass
 
 
 def test_synthesis_returns_a_complete_decodable_file(client):

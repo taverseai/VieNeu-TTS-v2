@@ -281,6 +281,7 @@ components:
       required:
         - api_version
         - model
+        - backbone
         - formats
         - sample_rate
         - channels
@@ -307,6 +308,10 @@ components:
         model:
           type: string
           const: vieneu-v3-turbo
+        backbone:
+          type: string
+          const: v3turbo
+          description: Server-level VIENEU_BACKBONE setting; API v1 supports v3turbo only.
         formats:
           type: array
           items:

@@ -80,6 +80,7 @@ services:
       - VIENEU_API_KEY=${VIENEU_API_KEY:-}
       - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
       - VIENEU_VOICE_PRO_ENABLED=${VIENEU_VOICE_PRO_ENABLED:-0}
+      - VIENEU_BACKBONE=${VIENEU_BACKBONE:-v3turbo}
       - VIENEU_HOME=/home/app/.vieneu
     env_file:
       - path: .env
@@ -123,6 +124,7 @@ services:
       - VIENEU_API_KEY=${VIENEU_API_KEY:-}
       - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
       - VIENEU_VOICE_PRO_ENABLED=${VIENEU_VOICE_PRO_ENABLED:-0}
+      - VIENEU_BACKBONE=${VIENEU_BACKBONE:-v3turbo}
       - VIENEU_HOME=/home/app/.vieneu
     env_file:
       - path: .env

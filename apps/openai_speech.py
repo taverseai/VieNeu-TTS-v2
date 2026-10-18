@@ -43,6 +43,7 @@ Extra requests wait up to ``VIENEU_QUEUE_TIMEOUT`` s in a queue of at most
 ``VIENEU_QUEUE`` entries, then get 429 with Retry-After.
 
 Environment:
+    VIENEU_BACKBONE=v3turbo           (only supported backbone in API v1)
     VIENEU_BACKEND=auto|onnx|pytorch   VIENEU_DEVICE=auto|cuda|cpu
     VIENEU_PRECISION=fp32|int8 (CPU)   VIENEU_ONNX_DIR=... (local ONNX export)
     VIENEU_MAX_STREAMS=16 (GPU)        VIENEU_QUEUE=16   VIENEU_QUEUE_TIMEOUT=10
@@ -108,6 +109,9 @@ class Engine:
     """The model plus the admission gate (how many streams run at once)."""
 
     def __init__(self):
+        self.backbone = os.environ.get("VIENEU_BACKBONE", "v3turbo")
+        if self.backbone != "v3turbo":
+            raise ValueError("VIENEU_BACKBONE must be 'v3turbo'; API v1 does not support other backbones")
         voice_pro = os.environ.get("VIENEU_VOICE_PRO_ENABLED", "0") == "1"
         if voice_pro and not os.environ.get("VIENEU_API_KEY"):
             raise ValueError("VIENEU_API_KEY is required for the Voice-Pro profile")
@@ -117,9 +121,9 @@ class Engine:
                         precision=os.environ.get("VIENEU_PRECISION", "fp32"),
                         onnx_dir=os.environ.get("VIENEU_ONNX_DIR") or None,
                         max_streams=_env_int("VIENEU_MAX_STREAMS", 16))
-        log.info("⏳ loading VieNeu-TTS v3 Turbo (backend=%s device=%s)", backend, device)
+        log.info("⏳ loading backbone=%s (backend=%s device=%s)", self.backbone, backend, device)
         t = time.perf_counter()
-        self.tts = Vieneu(mode="v3turbo", **kw)
+        self.tts = Vieneu(mode=self.backbone, **kw)
         self.backend = self.tts.backend
         # The voices and aliases that exist before any client enrolls one;
         # POST /v1/voices may not replace them.
@@ -471,6 +475,7 @@ def models():
     eng = engine()
     return {"object": "list", "data": [{
         "id": MODEL_ID, "object": "model", "created": 0, "owned_by": "vieneu",
+        "backbone": eng.backbone,
         "sample_rate": SAMPLE_RATE, "backend": eng.backend,
         "max_streams": eng.max_streams, "response_formats": ["pcm", "wav"],
         "stream_formats": ["audio", "sse"], "sample_rates": list(RATES),

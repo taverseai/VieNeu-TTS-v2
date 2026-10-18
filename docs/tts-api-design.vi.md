@@ -222,6 +222,7 @@ Các biến dưới đây được đọc khi bật profile Voice-Pro:
 HOST=0.0.0.0
 PORT=8000
 VIENEU_API_KEY=replace_with_your_key
+VIENEU_BACKBONE=v3turbo
 VIENEU_BACKEND=auto
 VIENEU_DEVICE=auto
 VIENEU_QUEUE_TIMEOUT=10

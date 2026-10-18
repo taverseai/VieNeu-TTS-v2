@@ -14,6 +14,21 @@ Sao chép `.env.voice-pro.example` thành `.env`, thay `VIENEU_API_KEY`, rồi c
 uv run --env-file .env python -m apps.openai_speech
 ```
 
+Cấu hình model trong `.env`:
+
+```dotenv
+VIENEU_BACKBONE=v3turbo
+VIENEU_BACKEND=auto
+VIENEU_DEVICE=auto
+```
+
+`VIENEU_BACKBONE` chọn model giọng nói. API V1 hiện chỉ hỗ trợ `v3turbo`;
+giá trị khác bị từ chối khi startup. `VIENEU_BACKEND` chọn runtime suy luận
+(`auto`, `onnx`, `pytorch`), còn `VIENEU_DEVICE` chọn thiết bị (`auto`, `cpu`, `cuda`).
+Model không đổi theo request. Sau khi sửa `.env`, khởi động lại server hoặc
+tạo lại container để áp dụng; `GET /v1/models` và `GET /v1/tts/capabilities`
+công bố trường `backbone` đang chạy.
+
 Mặc định server nghe `127.0.0.1:8000`. Đặt `HOST=0.0.0.0` khi Voice-Pro chạy trên
 máy khác. Dùng HTTPS qua reverse proxy nếu kết nối qua mạng không tin cậy.
 
