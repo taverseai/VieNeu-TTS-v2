@@ -29,6 +29,29 @@ Model không đổi theo request. Sau khi sửa `.env`, khởi động lại ser
 tạo lại container để áp dụng; `GET /v1/models` và `GET /v1/tts/capabilities`
 công bố trường `backbone` đang chạy.
 
+Để chọn checkpoint local từ `config.yaml`, thêm tên profile vào `.env`:
+
+```dotenv
+VIENEU_MODEL_PROFILE="VieNeu-TTS-v3-Turbo — Đạt Phi 01 (GPU)"
+VIENEU_BACKEND=auto
+VIENEU_DEVICE=auto
+```
+
+API đọc `repo`, `model_subfolder`, `requires_cuda` và `supports_streaming` từ
+profile. Đường dẫn `repo` tương đối tính theo thư mục chứa `config.yaml`.
+`VIENEU_CONFIG_PATH` cho phép dùng file YAML khác. `default: true` trong YAML
+thuộc Web UI; API chọn profile bằng biến môi trường này. Để trống profile sẽ
+dùng model gốc. Xem [danh sách backbone và checkpoint](backbones.vi.md).
+
+Bốn profile fine-tune hiện có yêu cầu CUDA và không streaming: gọi `/v1/tts`
+hoặc `/v1/audio/speech` với `stream=false`. Mỗi profile chỉ công bố giọng đóng
+gói cùng checkpoint và không nhận upload để clone giọng. Inference hoàn chỉnh
+được xử lý tuần tự để bảo vệ trạng thái model dùng chung; capability công bố
+`max_streams=1` dù cấu hình streaming chung có giá trị cao hơn. Dữ liệu registry
+nằm dưới `VIENEU_HOME/checkpoints/<checkpoint-id>`, tách khỏi model gốc và các
+checkpoint khác. `GET /v1/models` và capability trả `model_profile`,
+`backbone_repo`, `model_subfolder`, `supports_streaming`, `voice_cloning_supported`.
+
 Mặc định server nghe `127.0.0.1:8000`. Đặt `HOST=0.0.0.0` khi Voice-Pro chạy trên
 máy khác. Dùng HTTPS qua reverse proxy nếu kết nối qua mạng không tin cậy.
 
@@ -38,6 +61,13 @@ Hoặc dùng Docker đã kèm FFmpeg:
 docker compose -f docker/docker-compose.yml --profile api-cpu up --build
 # NVIDIA GPU: thay api-cpu bằng api-gpu.
 ```
+
+Với checkpoint local CUDA, dùng profile `api-gpu`. Compose mount `config.yaml`
+và `finetune/voices` của máy host vào container ở chế độ chỉ đọc. Có thể đặt
+`VIENEU_CHECKPOINTS_DIR` thành đường dẫn host khác chứa các thư mục `alan`,
+`dat_phi_01`, `dat_phi_02`, `dat_phi_03`; đường dẫn tương đối của bind mount
+được tính theo thư mục `docker`. Nếu chọn YAML riêng, cần mount YAML đó và model
+đúng đường dẫn tương ứng trong container. Không đóng gói weights vào image.
 
 Compose đọc `.env` và lưu giọng vào volume `api_data`. Chạy một process API cho
 mỗi `VIENEU_HOME`; server khóa thư mục này để hai process không xóa file của nhau.

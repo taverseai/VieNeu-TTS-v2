@@ -80,7 +80,7 @@ class TtsSettings:
 
     def capabilities(self, engine) -> dict:
         return {
-            "api_version": "1.0", "model": "vieneu-v3-turbo", "backbone": engine.backbone,
+            "api_version": "1.0", "model": engine.model_id, **engine.model_details(),
             "formats": ["mp3", "wav", "flac"], "sample_rate": 48_000,
             "channels": 1, "response_mode": "file", "ssml": False,
             "max_text_chars": self.max_text_chars, "text_length_unit": "unicode_code_points",

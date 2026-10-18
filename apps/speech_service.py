@@ -110,7 +110,7 @@ class SpeechService:
             raw = directory / "speech.f32"
             self.engine.acquire(context=context)
             try:
-                chunks = self.engine.tts.infer_stream(text, voice=voice,
+                chunks = self.engine.audio_chunks(text, context=context, voice=voice,
                                                      apply_watermark=self.engine.watermark, **sampling)
                 try:
                     samples = 0

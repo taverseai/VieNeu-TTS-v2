@@ -81,6 +81,8 @@ services:
       - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
       - VIENEU_VOICE_PRO_ENABLED=${VIENEU_VOICE_PRO_ENABLED:-0}
       - VIENEU_BACKBONE=${VIENEU_BACKBONE:-v3turbo}
+      - VIENEU_MODEL_PROFILE=${VIENEU_MODEL_PROFILE:-}
+      - VIENEU_CONFIG_PATH=/workspace/config.yaml
       - VIENEU_HOME=/home/app/.vieneu
     env_file:
       - path: .env
@@ -88,6 +90,8 @@ services:
     volumes:
       - huggingface_cache:/home/app/.cache/huggingface
       - api_data:/home/app/.vieneu
+      - ../config.yaml:/workspace/config.yaml:ro
+      - ${VIENEU_CHECKPOINTS_DIR:-../finetune/voices}:/workspace/finetune/voices:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
       interval: 15s

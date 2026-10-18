@@ -282,6 +282,11 @@ components:
         - api_version
         - model
         - backbone
+        - backbone_repo
+        - model_profile
+        - model_subfolder
+        - supports_streaming
+        - voice_cloning_supported
         - formats
         - sample_rate
         - channels
@@ -307,11 +312,27 @@ components:
           const: '1.0'
         model:
           type: string
-          const: vieneu-v3-turbo
+          description: Model ID from discovery; local checkpoints have a checkpoint-specific suffix.
+          example: vieneu-v3-turbo
         backbone:
           type: string
           const: v3turbo
           description: Server-level VIENEU_BACKBONE setting; API v1 supports v3turbo only.
+        backbone_repo:
+          type: string
+          description: Effective Hub repo ID or resolved local checkpoint directory.
+        model_profile:
+          type: [string, 'null']
+          description: Selected backbone_configs key, or null for the official default model.
+        model_subfolder:
+          type: string
+          example: update
+        supports_streaming:
+          type: boolean
+          description: Whether the selected checkpoint permits streaming on the OpenAI route.
+        voice_cloning_supported:
+          type: boolean
+          description: False for local fine-tuned profiles, which use their bundled voices.
         formats:
           type: array
           items:

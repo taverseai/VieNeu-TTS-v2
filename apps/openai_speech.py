@@ -87,6 +87,8 @@ from apps.tts_api import (
 )
 from apps.speech_service import SpeechService
 from apps.voice_registry import VoiceRegistry
+from apps.model_profiles import DEFAULT_REPO, LocalModelProfile
+from dataclasses import replace
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("vieneu.api")
@@ -115,15 +117,26 @@ class Engine:
         voice_pro = os.environ.get("VIENEU_VOICE_PRO_ENABLED", "0") == "1"
         if voice_pro and not os.environ.get("VIENEU_API_KEY"):
             raise ValueError("VIENEU_API_KEY is required for the Voice-Pro profile")
+        self.profile = LocalModelProfile.from_env()
+        self.supports_streaming = self.profile.supports_streaming if self.profile else True
+        if not self.supports_streaming and not voice_pro:
+            raise ValueError("Nonstreaming model profiles require VIENEU_VOICE_PRO_ENABLED=1")
+        self.model_id = f"{MODEL_ID}-local-{self.profile.storage_key}" if self.profile else MODEL_ID
         backend = os.environ.get("VIENEU_BACKEND", "auto")
         device = os.environ.get("VIENEU_DEVICE", "auto")
+        if self.profile is not None:
+            backend, device = self.profile.runtime(backend, device, os.environ.get("VIENEU_ONNX_DIR"))
         kw: dict = dict(backend=backend, device=device,
                         precision=os.environ.get("VIENEU_PRECISION", "fp32"),
                         onnx_dir=os.environ.get("VIENEU_ONNX_DIR") or None,
                         max_streams=_env_int("VIENEU_MAX_STREAMS", 16))
+        if self.profile is not None:
+            kw.update(backbone_repo=str(self.profile.repo), model_subfolder=self.profile.model_subfolder)
         log.info("⏳ loading backbone=%s (backend=%s device=%s)", self.backbone, backend, device)
         t = time.perf_counter()
         self.tts = Vieneu(mode=self.backbone, **kw)
+        if self.profile is not None:
+            self.profile.activate_voices(self.tts)
         self.backend = self.tts.backend
         # The voices and aliases that exist before any client enrolls one;
         # POST /v1/voices may not replace them.
@@ -133,8 +146,10 @@ class Engine:
         # calls frame by frame, but they share the cores — measured on a 6-core
         # desktop, fp32 keeps one stream real-time (RTF 0.58; two → 1.19), int8
         # two (RTF 0.35; two → 0.67). VIENEU_MAX_STREAMS overrides either.
-        self.sched = self.tts._get_stream_scheduler() if self.backend == "pytorch" else None
-        if self.sched is not None:
+        self.sched = self.tts._get_stream_scheduler() if self.supports_streaming and self.backend == "pytorch" else None
+        if not self.supports_streaming:
+            self.max_streams = 1
+        elif self.sched is not None:
             self.max_streams = self.sched.B
         else:
             cpu_default = 2 if kw["precision"] == "int8" else 1
@@ -142,6 +157,9 @@ class Engine:
         self.max_queue = _env_int("VIENEU_QUEUE", self.max_streams)
         self.queue_timeout = float(os.environ.get("VIENEU_QUEUE_TIMEOUT", "10"))
         self.tts_settings = TtsSettings.from_env(self.max_streams) if voice_pro else None
+        if self.tts_settings is not None and self.profile is not None:
+            self.tts_settings = replace(self.tts_settings,
+                                        home=self.tts_settings.home / "checkpoints" / self.profile.storage_key)
         self.registry: Optional[VoiceRegistry] = None
         self._gate = threading.BoundedSemaphore(self.max_streams)
         self._lock = threading.Lock()
@@ -149,7 +167,7 @@ class Engine:
         self.waiting = 0
         # Warm-up: capture the CUDA graphs / load the ONNX graphs before the
         # first client pays for it.
-        for _ in self.tts.infer_stream("Xin chào.", apply_watermark=False):
+        for _ in self.audio_chunks("Xin chào.", apply_watermark=False):
             pass
         self.speech_service = SpeechService(self, self.tts_settings) if self.tts_settings else None
         if self.speech_service is not None and self.tts_settings is not None:
@@ -160,6 +178,36 @@ class Engine:
                 raise
         log.info("✅ ready in %.1fs: backend=%s max_streams=%d queue=%d", time.perf_counter() - t,
                  self.backend, self.max_streams, self.max_queue)
+
+    def audio_chunks(self, text: str, context: Optional[RenderContext] = None, **sampling) -> Iterator[np.ndarray]:
+        if self.supports_streaming:
+            yield from self.tts.infer_stream(text, **sampling)
+        else:
+            from vieneu_utils.phonemize_text import normalize_to_chunks_v3_with_gaps
+            from vieneu_utils.core_utils import gaps_to_silence, pause_pad_samples
+            chunks, gaps = normalize_to_chunks_v3_with_gaps(text, max_chars=sampling.get("max_chars", 256))
+            pauses = gaps_to_silence(gaps)
+            previous = None
+            for index, chunk in enumerate(chunks):
+                if context is not None:
+                    context.check()
+                audio = self.tts.infer(chunk, **sampling)
+                if context is not None:
+                    context.check()
+                if previous is not None and len(audio):
+                    pad = pause_pad_samples(previous, audio, SAMPLE_RATE, pauses[index - 1])
+                    if pad:
+                        yield np.zeros(pad, dtype=np.float32)
+                yield audio
+                previous = audio
+
+    def model_details(self) -> dict:
+        return {"backbone": self.backbone,
+                "backbone_repo": str(self.profile.repo) if self.profile else DEFAULT_REPO,
+                "model_profile": self.profile.name if self.profile else None,
+                "model_subfolder": self.profile.model_subfolder if self.profile else "update",
+                "supports_streaming": self.supports_streaming,
+                "voice_cloning_supported": self.profile is None}
 
     def enter_queue(self) -> None:
         with self._lock:
@@ -361,7 +409,7 @@ def _speech_chunks(eng: Engine, req: SpeechRequest, rid: str, slot: _Slot) -> It
     emitted = 0
     rs = _Resampler(req.sample_rate)
     try:
-        for chunk in eng.tts.infer_stream(
+        for chunk in eng.audio_chunks(
             req.input, voice=req.voice or None, apply_watermark=eng.watermark,
             temperature=req.temperature, top_k=req.top_k, top_p=req.top_p,
             repetition_penalty=req.repetition_penalty, max_chars=req.max_chars,
@@ -408,6 +456,8 @@ def _sse_body(chunks: Iterator[np.ndarray], fmt: str, rate: int) -> Iterator[byt
 
 def speech(req: SpeechRequest):
     eng = engine()
+    if not eng.supports_streaming:
+        raise HTTPException(400, "Selected model profile does not support streaming; use stream=false or POST /v1/tts")
     fmt = req.response_format.lower()
     if fmt not in ("pcm", "wav"):
         raise HTTPException(400, f"response_format '{fmt}' not supported; use 'pcm' or 'wav'")
@@ -474,11 +524,10 @@ async def speech_endpoint(request: Request, req: SpeechRequest):
 def models():
     eng = engine()
     return {"object": "list", "data": [{
-        "id": MODEL_ID, "object": "model", "created": 0, "owned_by": "vieneu",
-        "backbone": eng.backbone,
+        "id": eng.model_id, "object": "model", "created": 0, "owned_by": "vieneu", **eng.model_details(),
         "sample_rate": SAMPLE_RATE, "backend": eng.backend,
         "max_streams": eng.max_streams, "response_formats": ["pcm", "wav"],
-        "stream_formats": ["audio", "sse"], "sample_rates": list(RATES),
+        "stream_formats": ["audio", "sse"] if eng.supports_streaming else [], "sample_rates": list(RATES),
     }]}
 
 
@@ -505,6 +554,8 @@ def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool
     """
     import tempfile
     eng = engine()
+    if eng.profile is not None:
+        raise TtsError(400, "unsupported_parameter", "Local fine-tuned profiles use their bundled voices; cloning is disabled.")
     if not _VOICE_NAME.fullmatch(name):
         raise HTTPException(400, "voice name: 1-64 letters, digits, spaces, '.', '-' or '_'")
     if not _VOICE_NAME.fullmatch(description or "x"):

@@ -549,6 +549,9 @@ Model merge đọc bằng đúng giọng đó từ speaker embedding đã đóng
 
 ## 🔬 6. Tổng quan mô hình <a name="backbones"></a>
 
+Xem [danh sách backbone và cách chọn checkpoint local cho API](docs/backbones.vi.md),
+gồm các profile Alan/Đạt Phi trong `config.yaml`, cấu hình `.env` và ví dụ SDK.
+
 | Model | Trạng thái | Định dạng | Thiết bị | Song ngữ | Tính năng | Tốc độ ([§4](#benchmarks)) |
 |---|---|---|---|---|---|---|
 | **VieNeu-TTS-v3** | 🔜 **Sắp ra mắt** | PyTorch | **GPU** | ✅ | ? | ? |
