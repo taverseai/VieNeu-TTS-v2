@@ -54,7 +54,14 @@ Lấy ID thực tế qua `GET /v1/voices`. Với `/v1/audio/speech`, dùng `inpu
 `response_format` và `stream:false`. Các profile local của notebook tắt
 streaming và clone giọng, dùng giọng đã đóng gói trong checkpoint.
 
-Cell **Tạo audio mẫu** là tùy chọn để nghe thử ngay trong notebook. Cell
+Cell **Lấy danh sách voices từ API** gọi `GET /v1/voices` qua tunnel bằng API
+key hiện tại, in ID và tên từng giọng; biến `VOICE_IDS` lưu các ID để dùng lại.
+
+Cell **Tạo audio mẫu** là tùy chọn để nghe thử ngay trong notebook. Nhập ID vào
+`VOICE`, đặt `TEMPERATURE` từ `0` đến `2` (mặc định `0.8`). Bỏ trống `VOICE` sẽ
+dùng giọng mặc định của checkpoint. Audio file API tự cân peak về tối đa `0.98`
+trước encode theo chức năng cân biên độ Web; source server phải chứa thay đổi
+này để áp dụng. Cell
 **Dừng API và Cloudflare Tunnel** kết thúc hai process. Chạy lại cell khởi động
 cũng dừng process cũ trước khi load checkpoint mới.
 

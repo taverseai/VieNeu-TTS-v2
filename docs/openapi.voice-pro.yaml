@@ -206,7 +206,9 @@ components:
           default: 0
           description: >-
             Percent amplitude change; gain = 1 + volume/100. -100 mutes without
-            removing duration. Peak limiter at -1 dBFS can reduce the requested gain.
+            removing duration. After audio processing, a single gain attenuates
+            the whole recording when its peak exceeds 0.98, matching Web amplitude
+            balancing. This can reduce the requested gain; quiet audio is not boosted.
         pitch:
           type: number
           minimum: -400

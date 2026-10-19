@@ -92,9 +92,9 @@ Mỗi request phải sinh được mẫu audio hữu hạn, không rỗng; im l�
 
 - `tempo_factor = 1 + rate / 100`: `rate=100` là đọc nhanh gấp hai, `rate=-50` là chậm còn một nửa. `rate=-100` làm hệ số bằng 0 nên bị từ chối; Voice-Pro cần giới hạn slider thấp nhất ở `-90`.
 - `pitch_factor = 2 ** (pitch / 1200)`: tăng pitch giữ nguyên thời lượng mục tiêu. Không coi giá trị pitch là Hz.
-- `amplitude_gain = 1 + volume / 100`: `volume=-100` là tắt tiếng, `volume=100` là nhân đôi biên độ. Sau gain, giới hạn đỉnh ở -1 dBFS bằng limiter có bù latency để tránh tràn mẫu; peak limit có thể làm mức tăng thực tế thấp hơn mức yêu cầu. Không tự chuẩn hóa từng câu.
+- `amplitude_gain = 1 + volume / 100`: `volume=-100` là tắt tiếng, `volume=100` là nhân đôi biên độ. Sau xử lý và resample, đo peak toàn bản ghi dạng float rồi giảm đều bằng hệ số `min(1, 0.98 / peak)` (peak bằng 0 thì giữ nguyên). Cùng quy tắc cân biên độ của Web, giữ động học tương đối, không tăng audio nhỏ và không chuẩn hóa riêng từng câu. Mức tăng thực tế có thể thấp hơn yêu cầu. MP3 có thể có peak khác sau decode do nén mất dữ liệu.
 
-Chọn FFmpeg có `rubberband` để xử lý tempo/pitch độc lập, bảo toàn formant, sau đó gain/limiter rồi encode. FFmpeg mô tả `tempo` và `pitch` của filter này là hệ số; filter cần build với `--enable-librubberband`. Đây là căn cứ chọn pipeline, không phải bằng chứng chất lượng giọng đã được đo: [tài liệu FFmpeg chính thức](https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/doc/filters.texi).
+Chọn FFmpeg có `rubberband` để xử lý tempo/pitch độc lập, bảo toàn formant, sau đó gain/resample, cân peak toàn bản ghi rồi encode. File float trung gian và bước đo peak tuân thủ giới hạn dung lượng/thời lượng, deadline và hủy request; đọc theo block để không nạp cả audio vào RAM. FFmpeg mô tả `tempo` và `pitch` của filter này là hệ số; filter cần build với `--enable-librubberband`. Đây là căn cứ chọn pipeline, không phải bằng chứng chất lượng giọng đã được đo: [tài liệu FFmpeg chính thức](https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/doc/filters.texi).
 
 ## 4. Giọng và danh sách capability
 

@@ -6,7 +6,7 @@ API dùng v3 Turbo và cùng engine với API OpenAI streaming. Hợp đồng ch
 ## Khởi chạy
 
 Cài FFmpeg có encoder `libmp3lame`, `pcm_s16le`, `flac` và filter `rubberband`,
-`volume`, `alimiter`. Server kiểm tra chúng khi khởi động.
+`volume`. Server kiểm tra chúng khi khởi động.
 
 Sao chép `.env.voice-pro.example` thành `.env`, thay `VIENEU_API_KEY`, rồi chạy:
 
@@ -96,7 +96,8 @@ Ví dụ JSON gửi tới `/v1/tts`:
   "format": "mp3",
   "rate": 0,
   "volume": 0,
-  "pitch": 0
+  "pitch": 0,
+  "temperature": 0.8
 }
 ```
 
@@ -107,6 +108,15 @@ trước khi đưa file vào luồng ghép/lồng tiếng. Lỗi là JSON với 
 
 `rate` là phần trăm thay đổi tempo (`-90..200`); `volume` là phần trăm thay đổi
 biên độ (`-100..100`, `-100` tắt tiếng); `pitch` dùng **cent**, phạm vi `-400..400`.
+`temperature` là tham số tùy chọn từ `0` đến `2`, mặc định `0.8`, được chuyển
+trực tiếp tới model khi tổng hợp.
+
+Audio file từ `/v1/tts` và `/v1/audio/speech` với `stream:false` tự cân biên độ
+theo cùng quy tắc của Web: sau hiệu ứng và resample, nếu peak vượt `0.98` thì
+giảm đều toàn bản ghi về mức đó trước encode. Audio nhỏ giữ nguyên, không cân
+riêng từng chunk. MP3 có thể có peak khác sau decode do nén mất dữ liệu.
+Streaming trực tiếp giữ pipeline hiện có, không đo peak toàn bản ghi.
+
 Adapter Voice-Pro cần đổi nhãn pitch từ Hz sang cent và reset về 0 khi đổi
 provider. Nếu chưa sửa UI, khóa pitch ở 0. Không áp lại các hiệu ứng này tại client.
 

@@ -6,6 +6,11 @@ import numpy as np
 import soundfile as sf
 
 
+def peak_attenuation_gain(peak):
+    """Use one gain for a whole recording, leaving quiet audio unchanged."""
+    return 0.98 / peak if peak > 0.98 else 1.0
+
+
 def write_generated_audio(path, waveform, sample_rate):
     """Save original float32 samples, including peaks outside +/-1."""
     audio = np.asarray(waveform, dtype=np.float32)
@@ -26,8 +31,7 @@ def balance_audio(audio_path):
     if not audio.size or not np.isfinite(audio).all():
         raise ValueError("Audio rỗng hoặc có dữ liệu không hợp lệ.")
     peak = float(np.max(np.abs(audio)))
-    if peak > 0.98:
-        audio = audio * (0.98 / peak)
+    audio = audio * peak_attenuation_gain(peak)
     with tempfile.NamedTemporaryFile(suffix="_balanced.wav", delete=False) as output:
         path = output.name
     try:

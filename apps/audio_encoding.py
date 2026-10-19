@@ -6,6 +6,9 @@ import subprocess
 import tempfile
 import time
 
+import numpy as np
+
+from apps.audio_output import peak_attenuation_gain
 from apps.tts_contract import RenderContext, TtsError, TtsSettings
 
 
@@ -23,7 +26,7 @@ class AudioEncoder:
         for option, required in (
             ("-encoders", ("libmp3lame", "pcm_s16le", "pcm_f32le", "flac")),
             ("-decoders", ("pcm_s16le", "pcm_f32le", "flac")),
-            ("-filters", ("rubberband", "volume", "alimiter")),
+            ("-filters", ("rubberband", "volume")),
         ):
             result = subprocess.run([settings.ffmpeg, "-hide_banner", option],
                                     capture_output=True, timeout=10, check=True)
@@ -63,10 +66,36 @@ class AudioEncoder:
         filters = []
         if rate or pitch:
             filters.append(f"rubberband=tempo={1 + rate / 100}:pitch={2 ** (pitch / 1200)}:formant=preserved")
-        filters.extend([f"volume={1 + volume / 100}", "alimiter=limit=0.891250938:level=false:latency=true"])
-        args = ["-threads", "1", "-f", "f32le", "-ar", "48000", "-ac", "1", "-i", str(raw),
+        filters.append(f"volume={1 + volume / 100}")
+        # Keep samples floating point until tempo, pitch, gain and resampling have
+        # finished. Measure the whole result before applying the same attenuation
+        # as Web playback, without normalizing individual model chunks.
+        max_decoded = int(self.settings.max_audio_seconds * sample_rate * 4)
+        with tempfile.TemporaryDirectory(prefix="balance-", dir=output.parent) as directory:
+            transformed = Path(directory) / "transformed.f32"
+            self._run([
+                "-threads", "1", "-f", "f32le", "-ar", "48000", "-ac", "1", "-i", str(raw),
                 "-filter_threads", "1", "-af", ",".join(filters), "-ac", "1", "-ar", str(sample_rate),
-                "-c:a", codec, "-threads", "1"]
+                "-c:a", "pcm_f32le", "-threads", "1", "-f", "f32le", str(transformed),
+            ], context, transformed, max_decoded)
+            peak = 0.0
+            with transformed.open("rb") as source:
+                while block := source.read(65536 * 4):
+                    context.check()
+                    samples = np.frombuffer(block, dtype="<f4")
+                    if not np.isfinite(samples).all():
+                        raise TtsError(500, "invalid_audio", "Audio processing produced invalid samples.")
+                    peak = max(peak, float(np.max(np.abs(samples))))
+            gain = peak_attenuation_gain(peak)
+            args = ["-threads", "1", "-f", "f32le", "-ar", str(sample_rate), "-ac", "1", "-i", str(transformed),
+                    "-filter_threads", "1", "-af", f"volume={gain:.17g}:precision=double",
+                    "-ac", "1", "-ar", str(sample_rate), "-c:a", codec, "-threads", "1"]
+            self._encode_output(args, fmt, output, context)
+        if not output.exists() or output.stat().st_size == 0:
+            raise TtsError(500, "invalid_audio", "No audio was encoded.")
+        return self._validate_output(output, context, fmt, sample_rate, max_decoded)
+
+    def _encode_output(self, args: list[str], fmt: str, output: Path, context: RenderContext) -> None:
         if fmt == "mp3":
             args += ["-b:a", "192k"]
         if fmt == "flac":
@@ -74,15 +103,15 @@ class AudioEncoder:
         if fmt == "pcm":
             args += ["-f", "s16le"]
         self._run([*args, str(output)], context, output, self.settings.max_output_bytes)
-        if not output.exists() or output.stat().st_size == 0:
-            raise TtsError(500, "invalid_audio", "No audio was encoded.")
+
+    def _validate_output(self, output: Path, context: RenderContext, fmt: str,
+                         sample_rate: int, max_decoded: int) -> float:
         decoded = output.with_name("validated.f32")
         decode_args = ["-threads", "1", "-xerror"]
         if fmt == "pcm":
             decode_args += ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1"]
         decode_args += ["-i", str(output), "-map", "0:a:0", "-ac", "1", "-ar", str(sample_rate),
                         "-threads", "1", "-f", "f32le", str(decoded)]
-        max_decoded = int(self.settings.max_audio_seconds * sample_rate * 4)
         self._run(decode_args, context, decoded, max_decoded)
         samples = decoded.stat().st_size // 4
         decoded.unlink()
