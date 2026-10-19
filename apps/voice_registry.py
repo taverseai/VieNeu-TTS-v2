@@ -97,7 +97,10 @@ class VoiceRegistry:
         self._published_metadata = metadata
 
     def list_voices(self) -> list[dict]:
-        return [dict(entry, aliases=list(entry["aliases"])) for entry in self._published_metadata]
+        # Same featured ordering as the Web preset dropdown; ties keep SDK order.
+        metadata = sorted(self._published_metadata,
+                          key=lambda entry: (entry.get("featured") is None, entry.get("featured") or 0))
+        return [dict(entry, aliases=list(entry["aliases"])) for entry in metadata]
 
     @staticmethod
     def _metadata(voice_id: str, name: str, entry: dict, aliases: list) -> dict:

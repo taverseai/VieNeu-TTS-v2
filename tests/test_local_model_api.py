@@ -77,7 +77,7 @@ def test_local_profile_loads_relative_to_config_and_serves_complete_audio(local_
         assert capability["model_profile"] == "Local Alan"
         assert capability["supports_streaming"] is False
         assert capability["max_streams"] == 1
-        assert [v["id"] for v in client.get("/v1/voices").json()["data"]] == ["Alan"]
+        assert [v["id"] for v in client.get("/v1/voices").json()["data"]] == ["unrelated-base-voice", "Alan"]
         response = client.post("/v1/tts", json={"text": "Xin chào", "voice": "Alan", "format": "wav"})
         assert response.status_code == 200
         audio, rate = sf.read(io.BytesIO(response.content))
@@ -146,5 +146,5 @@ def test_switching_local_checkpoints_does_not_reuse_the_previous_voice_registry(
     monkeypatch.setenv("VIENEU_MODEL_PROFILE", "Local Beta")
     monkeypatch.setattr(api, "ENGINE", None)
     with TestClient(api.app, headers={"Authorization": "Bearer local-test-key"}) as client:
-        assert [v["id"] for v in client.get("/v1/voices").json()["data"]] == ["Beta"]
+        assert [v["id"] for v in client.get("/v1/voices").json()["data"]] == ["unrelated-base-voice", "Beta"]
         assert client.get("/v1/models").json()["data"][0]["id"] != first_id

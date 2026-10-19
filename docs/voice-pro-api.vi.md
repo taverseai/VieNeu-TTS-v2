@@ -44,8 +44,10 @@ thuộc Web UI; API chọn profile bằng biến môi trường này. Để tr�
 dùng model gốc. Xem [danh sách backbone và checkpoint](backbones.vi.md).
 
 Bốn profile fine-tune hiện có yêu cầu CUDA và không streaming: gọi `/v1/tts`
-hoặc `/v1/audio/speech` với `stream=false`. Mỗi profile chỉ công bố giọng đóng
-gói cùng checkpoint và không nhận upload để clone giọng. Inference hoàn chỉnh
+hoặc `/v1/audio/speech` với `stream=false`. Mỗi profile công bố các preset SDK
+cộng giọng checkpoint như Web, ưu tiên giọng nổi bật trong danh sách; giọng
+checkpoint ghi đè nếu trùng tên và vẫn là giọng mặc định. Profile không nhận
+upload để clone giọng. Inference hoàn chỉnh
 được xử lý tuần tự để bảo vệ trạng thái model dùng chung; capability công bố
 `max_streams=1` dù cấu hình streaming chung có giá trị cao hơn. Dữ liệu registry
 nằm dưới `VIENEU_HOME/checkpoints/<checkpoint-id>`, tách khỏi model gốc và các

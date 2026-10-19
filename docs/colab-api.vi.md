@@ -42,7 +42,7 @@ speaker encoder từ Hugging Face. Khi thấy **SẴN SÀNG**, output có:
 - **API URL**: dùng làm server URL trong Voice-Pro.
 - **OpenAI Base URL**: URL có hậu tố `/v1`.
 - **TTS endpoint**: URL kết thúc bằng `/v1/tts`.
-- Model ID và danh sách giọng của checkpoint.
+- Model ID và danh sách giọng API đang cung cấp (preset SDK cộng giọng checkpoint).
 
 Gửi `Authorization: Bearer <API key>` cho các request API. Với `/v1/tts`, body:
 
@@ -52,7 +52,9 @@ Gửi `Authorization: Bearer <API key>` cho các request API. Với `/v1/tts`, b
 
 Lấy ID thực tế qua `GET /v1/voices`. Với `/v1/audio/speech`, dùng `input`,
 `response_format` và `stream:false`. Các profile local của notebook tắt
-streaming và clone giọng, dùng giọng đã đóng gói trong checkpoint.
+streaming và clone giọng. Các preset SDK vẫn dùng được như Web; giọng mặc định
+lấy từ checkpoint. Các giọng người dùng đã lưu riêng trên máy chạy Web không tự
+được đồng bộ lên Colab.
 
 Cell **Lấy danh sách voices từ API** gọi `GET /v1/voices` qua tunnel bằng API
 key hiện tại, in ID và tên từng giọng; biến `VOICE_IDS` lưu các ID để dùng lại.

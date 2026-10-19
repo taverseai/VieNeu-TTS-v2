@@ -90,6 +90,6 @@ class LocalModelProfile:
         missing = set(self.voice_ids) - tts._preset_voices.keys()
         if missing:
             raise ValueError("SDK did not load all voices declared by the local checkpoint")
-        tts._preset_voices = {key: tts._preset_voices[key] for key in self.voice_ids}
-        tts._voice_aliases = {alias: target for alias, target in tts._voice_aliases.items() if target in self.voice_ids}
+        # Match Web: SDK presets remain available alongside checkpoint voices.
+        # The SDK already overlays bundled voices on built-ins with the same name.
         tts._default_voice = self.default_voice

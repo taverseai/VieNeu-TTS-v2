@@ -55,7 +55,9 @@ Sau startup, gọi `GET /v1/voices` để lấy ID giọng và gửi:
 Đây là body của `POST /v1/tts`, có header Bearer như
 [hướng dẫn Voice-Pro](voice-pro-api.vi.md). Với endpoint OpenAI, dùng `input`
 thay `text` và thêm `stream: false`. Không bật streaming cho profile khai báo
-`supports_streaming: false`. Các profile fine-tune dùng giọng đi kèm; upload để
+`supports_streaming: false`. Danh sách giọng giống Web: giữ các preset có sẵn
+của SDK và thêm giọng checkpoint; trùng tên thì giọng checkpoint được ưu tiên.
+Giọng mặc định vẫn lấy từ checkpoint. Upload để
 clone giọng chỉ được bật trên model gốc.
 
 Kiểm tra checkpoint thực tế qua `GET /v1/models` hoặc `GET /v1/tts/capabilities`:
