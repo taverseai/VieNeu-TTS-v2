@@ -552,6 +552,11 @@ Model merge đọc bằng đúng giọng đó từ speaker embedding đã đóng
 Xem [danh sách backbone và cách chọn checkpoint local cho API](docs/backbones.vi.md),
 gồm các profile Alan/Đạt Phi trong `config.yaml`, cấu hình `.env` và ví dụ SDK.
 
+Chạy API với checkpoint trên Google Drive: mở
+[notebook Colab One Click](notebooks/VieNeu_TTS_API_Colab.ipynb), chọn GPU,
+nhập đường dẫn backbone rồi chạy cell khởi động để lấy URL Cloudflare Tunnel.
+Xem [hướng dẫn Colab](docs/colab-api.vi.md) để chuẩn bị source và checkpoint.
+
 | Model | Trạng thái | Định dạng | Thiết bị | Song ngữ | Tính năng | Tốc độ ([§4](#benchmarks)) |
 |---|---|---|---|---|---|---|
 | **VieNeu-TTS-v3** | 🔜 **Sắp ra mắt** | PyTorch | **GPU** | ✅ | ? | ? |
